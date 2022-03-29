@@ -9,7 +9,6 @@
 
 # Functions needed
 # Make sure all UniFi sites have entries in Autotask (UDF)
-# From Autotask, pull in all CI with Mac Address and sync to UniFi
 
 # Ideas
 # Send alerts from Unifi to AT as tickets
@@ -31,6 +30,7 @@ at = atSite(config.atHost, config.atUsername, config.atPassword, config.atAPIInt
 
 atCIType4network = config.atCIType4network
 atCICategory = config.atCICategory
+atProductID = config.atProductID
 
 # Names in Unifi to ignore. Maybe switch this over to Site ID, so if the name changes, they don't pop out of this list.
 unifi_ignore = config.unifi_ignore
@@ -51,8 +51,8 @@ def unifi2at():
 
 				print(site['desc'] + " doesn't have a UniFi Site ID. Please add " + site['name'] + " to the Autotask Company's UDF field to allow syncing")
 			else:
-				print(" ")
-				print(site['desc'] + " in syncing")
+#				print(" ")
+#				print(site['desc'] + " in syncing")
 				c.site_id = site['name']
 				c.devices = get_unifi_devices()
 
@@ -61,9 +61,9 @@ def unifi2at():
 				# loop through devices and check if it exsit in AT. If it does update AT's information with Unifi. If not, create a new CI in AT
 				for device in c.devices:
 					# TODO Currently using a default product. We should add a fuction to check if the unifi model is a product in AT, if not add it
-					ci_cat = "111" # "Unifi Controller Devices" CI Catagory in AT
-					ci_type = "9" # "Networking Devices" CI Type in AT
-					pid = "29683247" # Generic Unifi Product in AT
+					ci_cat = atCICategory # "Unifi Controller Devices" CI Catagory in AT
+					ci_type = atCIType4network # "Networking Devices" CI Type in AT
+					pid = atProductID # Generic Unifi Product in AT
 					cid = company[0]['id']
 					if 'name' in device.keys():
 						name = device['name']
@@ -90,8 +90,8 @@ def unifi2at():
 					]
 
 					return_value = at.add_ci(ci_cat, cid, ci_type, pid, name, ip, serial, udf)
-					print("    Device synced " +name + " " + model + " " + ip + " " + mac)
-					print(return_value)
+#					print("    Device synced " + name + " " + model + " " + ip + " " + mac)
+#					print(return_value)
 					time.sleep(1) # trying to be a little friendlier to Autotask
 				time.sleep(1) # trying to be a little friendlier to my UniFi Controller
 
