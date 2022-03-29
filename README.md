@@ -7,7 +7,8 @@ Requirements
 
 
 
-atCI2Unifi.py - 
+atCI2Unifi.py -
+
 	Description:
 	Is a script that will take Configuration Items from Autotask and create
 	a client alias within site in your Unifi Controller. This makes it 
@@ -24,10 +25,11 @@ atCI2Unifi.py -
 	Address from a UDF Field called "Mac Address" If there are more than 1 
 	Mac Addresses in, it will put a number in parentheses after the hostname.
 	
-unifDevices2at.py - 
+unifDevices2at.py -
+
 	Description:
 	Takes UniFi network devices and adds them as Configuration Items within 
-	Autotask. 
+	Autotask.
 	Assumtions:
 	atCIType4network: This is the CI Type that UniFi devices will be set to 
 	within Autotask
@@ -36,5 +38,3 @@ unifDevices2at.py -
 	model, but currently it's assigned to just one. You have to create the 
 	product in Autotask and assign the product id here
 	unifi_ignore: These are a list of UniFi sites to ignore.
-
-		
