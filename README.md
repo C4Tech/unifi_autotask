@@ -36,5 +36,3 @@ unifDevices2at.py -
 	model, but currently it's assigned to just one. You have to create the 
 	product in Autotask and assign the product id here
 	unifi_ignore: These are a list of UniFi sites to ignore.
-
-		
