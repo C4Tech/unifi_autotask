@@ -14,6 +14,8 @@
 # Send alerts from Unifi to AT as tickets
 # See if we can pull the icons for Unifi devices and send that to AT
 
+# TODO check for UniFi devices in AT that are not in the UniFi controller and deactivate them.
+
 
 import requests
 import json
@@ -36,7 +38,6 @@ atProductID = config.atProductID
 unifi_ignore = config.unifi_ignore
 
 
-		
 def get_unifi_devices():
 	""" Return a list of all devices """
 	return c._api_read("stat/device/")
@@ -51,7 +52,6 @@ def unifi2at():
 
 				print(site['desc'] + " doesn't have a UniFi Site ID. Please add " + site['name'] + " to the Autotask Company's UDF field to allow syncing")
 			else:
-#				print(" ")
 #				print(site['desc'] + " in syncing")
 				c.site_id = site['name']
 				c.devices = get_unifi_devices()
@@ -61,6 +61,7 @@ def unifi2at():
 				# loop through devices and check if it exsit in AT. If it does update AT's information with Unifi. If not, create a new CI in AT
 				for device in c.devices:
 					# TODO Currently using a default product. We should add a fuction to check if the unifi model is a product in AT, if not add it
+					# TODO Skip devices with pending aduption as a status. Maybe create a ticket
 					ci_cat = atCICategory # "Unifi Controller Devices" CI Catagory in AT
 					ci_type = atCIType4network # "Networking Devices" CI Type in AT
 					pid = atProductID # Generic Unifi Product in AT
@@ -69,8 +70,12 @@ def unifi2at():
 						name = device['name']
 					else:
 						name = "Unnamed UniFi Device"
+#					print("--Syncing device: " + name)
 					ip = device['ip']
-					serial = device['serial']
+					if 'serial' in device.keys():
+						serial = device['serial']
+					else:
+						serial = None
 					did = device['_id']
 					model = device['model']
 					mac = device['mac']
@@ -88,11 +93,13 @@ def unifi2at():
 						    {'name': 'Make & Model', 'value': "UniFi " + model},
 
 					]
-
-					return_value = at.add_ci(ci_cat, cid, ci_type, pid, name, ip, serial, udf)
+					if serial is not None:
+						return_value = at.add_ci(ci_cat, cid, ci_type, pid, name, ip, serial, udf)
+						time.sleep(1) # trying to be a little friendlier to Autotask
+#					else:
+#						print("--  NOT SYNCING no serial")
 #					print("    Device synced " + name + " " + model + " " + ip + " " + mac)
 #					print(return_value)
-					time.sleep(1) # trying to be a little friendlier to Autotask
 				time.sleep(1) # trying to be a little friendlier to my UniFi Controller
 
 unifi2at()
