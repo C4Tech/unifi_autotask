@@ -1,4 +1,4 @@
-#!/usr/bin/python3.9
+#!/usr/bin/python3
 
 # Description:
 # This pushes Autotask Configuration Items Hostname and Descriptions to Unifi as an alias based on Mac Address

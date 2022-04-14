@@ -1,4 +1,4 @@
-#!/usr/bin/python3.9
+#!/usr/bin/python3
 
 # Description:
 # This syncs UniFi Devices to Autotask and syncs Autotask Configureation Items as "Configured Clients" in Unifi
@@ -41,7 +41,7 @@ unifi_ignore = config.unifi_ignore
 def get_unifi_devices():
 	""" Return a list of all devices """
 	return c._api_read("stat/device/")
-
+	
 def unifi2at():
 	for site in c.get_sites():
 		if site['desc'] not in unifi_ignore:
@@ -55,7 +55,7 @@ def unifi2at():
 #				print(site['desc'] + " in syncing")
 				c.site_id = site['name']
 				c.devices = get_unifi_devices()
-
+				print(site['desc'])
 				# TODO we will use a UDF in AT with a lable for unifi site ID. We should output a list of sites with no lable in AT. Unifi Site Name and Unifi Site ID.
 
 				# loop through devices and check if it exsit in AT. If it does update AT's information with Unifi. If not, create a new CI in AT
@@ -95,12 +95,28 @@ def unifi2at():
 					]
 					if serial is not None:
 						return_value = at.add_ci(ci_cat, cid, ci_type, pid, name, ip, serial, udf)
-						time.sleep(1) # trying to be a little friendlier to Autotask
+						# If router is offline, send alert to AT			
+						routers = ['UGW3','UGW4','UGWHD4','UGWXG','UXGPRO']
+						if device['model'] in routers:
+							if device['state'] != 1:
+								at.send_alert_ticket(cid, return_value['itemId'])
+
+
+#						time.sleep(1) # trying to be a little friendlier to Autotask
 #					else:
 #						print("--  NOT SYNCING no serial")
-#					print("    Device synced " + name + " " + model + " " + ip + " " + mac)
-#					print(return_value)
+
+
 				time.sleep(1) # trying to be a little friendlier to my UniFi Controller
 
 unifi2at()
+# Troubleshooting ticket creation
+#ticket = at.send_alert_ticket(313, 1596)
+#print(ticket)
+
+#filter_fields = at.create_filter("eq", "ticketNumber", "T20220410.0007", udf = None)
+#ticket = at.create_query("tickets", filter_fields)
+#print(ticket)
+
+
 
