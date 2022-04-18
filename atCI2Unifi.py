@@ -15,6 +15,7 @@ import requests
 import json
 import sys
 import time
+import datetime
 import csv
 import macaddress
 from pyunifi.controller import Controller
@@ -33,7 +34,9 @@ ignoreProduct = config.atProductID
 # Had to rewrite part of the way that pyunifi.controller did queries
 # To look to see if Unifi knew of a mac address would raise an error and stop the script.
 # This fuction wiill look up the mac, but iqnore errors if it is not in UniFi
-def updateUnifiDevice(mac,alias):
+
+
+def updateUnifiDevice(mac, alias, ci):
 	url = c._api_url() + "stat/user/" + mac
 	response = c.session.get(url, params=None, headers=c.headers)
 	if response.headers.get("X-CSRF-Token"):
@@ -51,11 +54,23 @@ def updateUnifiDevice(mac,alias):
 		result = obj
 
 	if result:
-		# TODO check i each value is NULL
+		# TODO check if each value is NULL
 		print("     - Adding " + alias + "   mac: " + mac + " ", end = '')
 		c.set_client_alias(mac, alias)
 		print("     - finished adding")
-	time.sleep(1)
+		updateATCI(result, ci)
+	return result
+
+def updateATCI(result, ci):
+	last_seen = str(datetime.datetime.fromtimestamp(int(result[0]['last_seen'])).isoformat()) + ".0000000"
+	udf = [{'name': 'UniFi Last Seen', 'value': last_seen}]
+
+	if 'first_seen' in result[0]:
+		first_seen = str(datetime.datetime.fromtimestamp(int(result[0]['first_seen'])).isoformat()) + ".0000000"
+		udf.append({'name': 'UniFi First Seen', 'value': first_seen},)
+
+	return at.update_ci_udf(ci['id'], ci['productID'], udf)
+
 
 def main():
 	# TODO allow the pulling of more than 1 unifi site id from Autotask
@@ -97,7 +112,7 @@ def main():
 									alias = ci['rmmDeviceAuditHostname'] + "(" + str(count) + ") - " + ci['rmmDeviceAuditDescription']
 							else:
 								alias = ci['rmmDeviceAuditHostname'] + "(" + str(count) + ")"
-						updateUnifiDevice(mac, alias)
+						updateUnifiDevice(mac, alias, ci)
 
 					except ValueError as error:
 						pass
@@ -114,7 +129,7 @@ def main():
 								mac = i['value']
 								alias = ci['referenceTitle']
 								if ci['referenceTitle'] is not None:
-									updateUnifiDevice(mac, alias)
+									updateUnifiDevice(mac, alias, ci)
 							except ValueError as error:
 								pass
 
