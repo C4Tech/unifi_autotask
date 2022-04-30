@@ -38,6 +38,10 @@ atProductID = config.atProductID
 atUnifiIssueType = "24"  # Need to move to the conf file
 atUnifiLTESubscriptionUnknown = 261
 atUnifiLTEWeak = 262
+atUnifiMultiAlert = 263
+unifiAlertThreashold = 5
+
+
 
 
 # Names in Unifi to ignore. Maybe switch this over to Site ID, so if the name changes, they don't pop out of this list.
@@ -48,8 +52,13 @@ def get_unifi_devices():
 	""" Return a list of all devices """
 	return c._api_read("stat/device/")
 	
+def add_ticket_note(ticket_id):
+	print("function")	
+
 # This is from unifiAlert2at.py We should make a common lib
 def send_unifi_alert_ticket(ticket_title, description, sub_issue, company_id, ci_id):
+	# TODO Check for other tickets open for the same device. Add those ticket numbers in the description of the new ticket. Update the otehr ticket with a note about the creation of this new ticket
+
 	filter_fields1 = at.create_filter("eq", "configurationItemID", str(ci_id))
 	filter_fields2 = at.create_filter("eq", "subIssueType", sub_issue)
 	filter_fields = filter_fields1 + "," + filter_fields2
@@ -59,7 +68,6 @@ def send_unifi_alert_ticket(ticket_title, description, sub_issue, company_id, ci
 	due_date += timedelta(hours = 2)
 	# TODO Check if other devices are on within the same network. Add that detail to the ticket
 	if not ticket: # checks to see if there are already a ticket and doesn't create one
-		# TODO add Due date. Currently expiring tickets by 2 horus before creation date.
 		params = {
 			'companyID': company_id,
 			'configurationItemID': ci_id,
@@ -76,8 +84,76 @@ def send_unifi_alert_ticket(ticket_title, description, sub_issue, company_id, ci
 		}
 		return at._api_write("Tickets", params)
 	else:
+		# There is a ticket already created
+		# TODO Add the new information to the ticekt once a day.
+		last_activity = datetime.strptime(ticket['lastActivityDate'],'%Y-%m-%dT%H:%M:%SZ')
+		if last_activity <= (date - timedelta(days = 1)):
+			print("no activity yesterday")
+		else:
+			print("There was activity yesterday")
 		return ticket
-	
+
+def remove_old_alerts(alerts):
+	date = datetime.utcnow()
+	date -= timedelta(days = 1)
+	old_alerts = []
+	for alert in alerts:
+		alert_date = datetime.strptime(alert['datetime'],'%Y-%m-%dT%H:%M:%SZ')
+		if alert_date < date:
+			old_alerts.append(alert)
+	for old_alert in old_alerts:
+		alerts.remove(old_alert)
+	return alerts
+
+
+def check_alerts(alerts, mac, cid, ci_id):
+	x = 0
+	date = datetime.utcnow()
+	date -= timedelta(days = 1)
+	description = ""
+	unifi_mac = ""
+
+	for alert in alerts:
+		if alert['key'] == "EVT_GW_Lost_Contact":
+			unifi_mac = alert['gw']
+		elif alert['key'] == "EVT_AP_Lost_Contact":
+			unifi_mac = alert['ap']
+		elif alert['key'] == "EVT_SW_Lost_Contact":
+			unifi_mac = alert['sw']
+		elif alert['key'] == "EVT_LTE_Lost_Contact":
+			unifi_mac = alert['dev']
+		elif alert['key'] == "EVT_GW_CommitError":
+			unifi_mac = alert['gw']
+		elif alert['key'] == "EVT_GW_RestartedUnknown":
+			unifi_mac = alert['gw']
+		elif alert['key'] == "EVT_GW_WANTransition":
+			unifi_mac = alert['gw']
+		elif alert['key'] == "EVT_AP_DetectRogueAP": # We don't want to track this
+			break
+		elif alert['key'] == "EVT_AP_RadarDetected": # We don't want to track this
+			break
+		elif alert['key'] == "EVT_SW_StpPortBlocking":
+			unifi_mac = alert['sw']
+		elif alert['key'] == "EVT_SW_RestartedUnknown":
+			unifi_mac = alert['sw']
+		elif alert['key'] == "EVT_LTE_HardLimitUsed":
+			unifi_mac = alert['dev']
+		elif alert['key'] == "EVT_LTE_Threshold":
+			unifi_mac = alert['dev']
+		else:
+			# TODO Create ticket with Information on the new alert so I can update the script
+			print(alert)
+		if mac == unifi_mac:
+			description = description + alert['datetime'] + " - alert: " + alert['msg'] + "\n\n"
+			x += 1
+			
+	if x > int(unifiAlertThreashold):
+		ticket_title = "UniFi Alert: Device had  " + str(x) + " alerts within a 24 hour period"
+		print("          - Creating ticket for " + unifi_mac)
+		sub_issue = str(atUnifiMultiAlert)
+		send_unifi_alert_ticket(ticket_title, description, sub_issue, cid, ci_id)
+
+
 def unifi2at():
 	for site in c.get_sites():
 		if site['desc'] not in unifi_ignore:
@@ -88,10 +164,11 @@ def unifi2at():
 
 				print(site['desc'] + " doesn't have a UniFi Site ID. Please add " + site['name'] + " to the Autotask Company's UDF field to allow syncing")
 			else:
-#				print(site['desc'] + " in syncing")
+				print(site['desc'] + " is syncing")
 				c.site_id = site['name']
 				c.devices = get_unifi_devices()
-				print(site['desc'])
+				alerts = remove_old_alerts(c.get_alerts())
+				print("     Number of alerts: " + str(len(alerts)))
 				# TODO we will use a UDF in AT with a lable for unifi site ID. We should output a list of sites with no lable in AT. Unifi Site Name and Unifi Site ID.
 
 				# loop through devices and check if it exsit in AT. If it does update AT's information with Unifi. If not, create a new CI in AT
@@ -106,7 +183,6 @@ def unifi2at():
 						name = device['name']
 					else:
 						name = "Unnamed UniFi Device"
-#					print("--Syncing device: " + name)
 					ip = device['ip']
 					if 'serial' in device.keys():
 						serial = device['serial']
@@ -115,12 +191,11 @@ def unifi2at():
 					model = device['model']
 					mac = device['mac']
 					if device['state'] == 1:
-						first_seen = datetime.utcnow().strftime("%Y-%m-%d")
+						last_seen = datetime.utcnow().strftime("%Y-%m-%d")
 
 					#last_seen doesn't appear to be reliable. Check later
 #					last_seen = datetime.fromtimestamp(device['last_seen']).strftime("%Y-%m-%d")
-					# TODO change udfs to be defined in the conf file, since there is no way in advanced to know what UDFs different MSPs are using. 
-					# Maybe have this layout in the config file and have them define it by the UniFi key
+
 					udf = [
 						    {'name': 'Name', 'value': name},
 						    {'name': 'AEM_Description', 'value': name},
@@ -131,11 +206,12 @@ def unifi2at():
 						    {'name': 'Make & Model', 'value': "UniFi " + model},
 # Need to append or something if first_seen as a value
  #  						    {'name': 'UniFi First Seen', 'value': first_seen},
- #  						    {'name': 'UniFi Last Seen', 'value': last_seen},
+  						    {'name': 'UniFi Last Seen', 'value': last_seen},
 					]
 					if serial is not None:
 						return_value = at.add_ci(ci_cat, cid, ci_type, pid, name, ip, serial, udf)
-
+						if len(alerts) > 0 :
+							check_alerts(alerts, mac, cid, return_value['itemId'])
 						ulte = ['ULTE','ULTEPUS','ULTEPEU']
 						if device['model'] in ulte:
 							if device['lte_subscription_status'] == 'unknown':
@@ -164,6 +240,9 @@ def unifi2at():
 #								at.send_alert_ticket(cid, return_value['itemId'])
 
 unifi2at()
-#print(at.get_ticket_by_number("T20220427.0070"))
+#print(at.get_ticket_by_number("T20220429.0027"))
 
+#c.site_id = "rca4qk6h"
+#check_alerts("e0:63:da:23:ac:e4")
+#print(c.get_device_stat("e0:63:da:23:ac:e4"))
 

@@ -85,6 +85,7 @@ def main():
 		cis = at.get_cis(ci_filter_field)
 
 		for ci in cis:
+
 			mac = None
 			alias = None
 			# Check RMM Fields first

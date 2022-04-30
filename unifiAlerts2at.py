@@ -1,14 +1,46 @@
 #!/usr/bin/python3
 
 # Description:
-# Deal with UniFi alerts
+# Creates Autotask Tickets for UniFi alerts
 
 # Reuirements
-# Autotask Requirements  - Must add a User Defind Field called UniFi Site ID
 # API User has to have "edit Protected Data" permissions to edit UDFs
+# TODO create an onboarding script
+# Needed to create the Following Autotask UDFs for these scripts use
+# Companies
+#  Name         			| Type					| Sort Oder
+#  UniFi Site ID			| Text (Signal Line)	| 2
+#
+# Configuration Items
+#  Name						| Type					| Sort Oder
+#  UniFi Alerts Ignore list	| Text (Multi Line)		| 3
+#  UniFi First Seen			| Date					| 2
+#  UniFi Last Seen			| Date					| 2
+#
+# Needed Service Desk Issue Types
+# Issue Type Name: UniFi Alerts
+# All Subissues are associated with the "Monitoring Alert" Queue
+#  Issue Type Name:
+#  Commit Error
+#  Detect Rogue AP
+#  IPS Alert
+#  Lost Contact
+#  LTE Hard Limit Used
+#  LTE Subscription Unknown
+#  LTE Threshold
+#  LTE Weak Signal
+#  LTE Muliple Alerts
+#  Radar Detected
+#  STP Port Blocking
+#  WAN Transition
+#  ZZZ Unknown Event
 
+
+# TODO Create a report on all site-devices that have entries in the ignroe
 # TODO check for UniFi devices in AT that are not in the UniFi controller and deactivate them.
-
+# TODO It looks like someone setup a device to the wrong client in Autotask and this confused the script. It was able to create an alert ticket, but not close it because it was on the wrong client.
+# TODO create a search for device script and maybe connect it to slack
+# TODO Alert in Slack or as a ticket if the script cannot log into the controller
 
 import requests
 import json
@@ -33,6 +65,7 @@ atUnifiIssueType = "24"  # Need to move to the conf file
 # Create a Sub-Issue Type called Lost Contact
 atLostContact = "252"
 atCommitError = "259"
+atWANTransition = "264"
 
 # Names in Unifi to ignore. Maybe switch this over to Site ID, so if the name changes, they don't pop out of this list.
 unifi_ignore = config.unifi_ignore
@@ -41,7 +74,7 @@ def check_get_device_stat(mac):
 	url = c._api_url() + "stat/device/" + mac
 	response = c.session.get(url, params=None, headers=c.headers)
 	if response.headers.get("X-CSRF-Token"):
-		self.headers = {"X-CSRF-Token": response.headers["X-CSRF-Token"]}
+		c.headers = {"X-CSRF-Token": response.headers["X-CSRF-Token"]}
 
 	obj = json.loads(response.text)
 	if "meta" in obj:
@@ -53,7 +86,6 @@ def check_get_device_stat(mac):
 		result = obj["data"]
 	else:
 		result = obj
-
 	return result
 
 def archive_alert(alert_id):
@@ -105,7 +137,7 @@ def lost_contact(alert, unifi_type):
 				ticket_title = "UniFi Alert: Lost contact with the gateway"
 			else:
 				ticket_title = "UniFi Alert: Lost contact with the UniFi device"
-			description = "Message from the UniFi Controller is: " + alert['msg'] + "\n\nThis message will auto clear if the device checks back in"
+			description = "Message from the UniFi Controller is: \n" + alert['datetime'] + " - " + alert['msg'] + "\n\nThis message will auto clear if the device checks back in"
 
 			send_unifi_alert_ticket(ticket_title, description, atLostContact, ci['companyID'], ci['id'])
 	archive_alert(alert['_id'])
@@ -117,10 +149,53 @@ def commit_error(alert, unifi_type):
 	description = "Message from the UniFi Controller is: " + alert['msg'] + "\n\nMore Information - Commit Error was: " + alert['commit_errors'] + "\n\nPlease not this message will not auto clear"
 	send_unifi_alert_ticket(ticket_title, description, atCommitError, ci['companyID'], ci['id'])
 	print("sent in a ticket for " + ci['referenceTitle'])
+	archive_alert(alert['_id'])
 
-	
-def check_alerts(site):
-	# TODO Probably a better way is the pull in all devices from the unifi site and compare, instead of looking up the device for each alert.
+def wan_transition(alert):
+	device = check_get_device_stat(alert['gw'])
+	# I think I can match uplink to wan1 ip
+	alert_date = dateutil.parser.isoparse(alert['datetime'])
+	if alert_date.strftime("%Y-%m-%d") == datetime.today().strftime("%Y-%m-%d"):
+		if device:
+			if device[0]['wan1']['ip'] != device[0]['uplink']['ip']:
+				ci = at.get_ci_by_serial(device[0]['serial'])[0]
+				ticket_title = "Gateway failover event"
+				description = "Message from the UniFi Controller is: \n" + alert['datetime'] + " - " + alert['msg']
+				send_unifi_alert_ticket(ticket_title, description, atWANTransition, ci['companyID'], ci['id'])
+				print("sent in a ticket for " + site['desc'] + " " + ci['referenceTitle'])
+				archive_alert(alert['_id'])				
+			else:
+				archive_alert(alert['_id'])
+		else:
+			print("EVT_GW_WANTransition - no device was returned")
+			print(alert['msg'])
+	else:
+		archive_alert(alert['_id'])
+
+def rouge_ap(alert):
+	device = check_get_device_stat(alert['ap'])
+	alert_date = dateutil.parser.isoparse(alert['datetime'])
+	if alert_date.strftime("%Y-%m-%d") == datetime.today().strftime("%Y-%m-%d"):
+		if device:
+			ci = at.get_ci_by_serial(device[0]['serial'])[0]
+			udfs = ci['userDefinedFields']
+			for udf in udfs:
+				ignore_list = []
+				if udf['name'] == "UniFi Alerts Ignore list":
+					ignore_list_value = udf['value']
+					if ignore_list_value is not None:
+						ignore_list = ignore_list_value.split("\n")
+					if alert['key'] not in ignore_list:
+						ticket_title = "Rouge AP detected"
+						description = "Message from UniFi Controller is: \n" + alert['datetime'] + " - " + alert['msg'] + "\n\n\n\nPlease Note: This message will not autoclear.\nIf this is a know Access Point and you wish to stop getting these alerts.\n * Consult with a senior tech!\n * Log into the UniFi Controller. \n * Make sure you are using 'Legacy Mode'. \n * Under 'Insight' on the left \n * pick 'Neighboring Access Point' in the upper right hand drop down list\n * Look for a AP that has a red dot in the 'Rouge' Column \n * On the far right of that row, when you hoover over it, the words 'Mark as known' will appear. Pick it. \n * Archive all Rogue AP alerts under 'Alerts'"
+						at.send_generic_alert_ticket(ticket_title, description, ci['companyID'], ci['id'])
+						print("sent in a ticket for " + ci['referenceTitle'])
+						archive_alert(alert['_id'])
+					break
+	else:
+		archive_alert(alert['_id'])
+
+def check_unarchived_alerts(site):
 	alerts = c.get_alerts_unarchived()
 	print(site['desc'])
 	for alert in alerts:
@@ -132,52 +207,19 @@ def check_alerts(site):
 			lost_contact(alert, 'sw')
 		elif alert['key'] == "EVT_LTE_Lost_Contact":
 			lost_contact(alert, 'dev')
-
 		elif alert['key'] == "EVT_GW_CommitError":
 			commit_error(alert, 'gw')
-		elif alert['key'] == "EVT_GW_RestartedUnknown":
-			# create ticket if X number of this alert is over X period of time
-			print(" - Router restart Unknown")
-		#WAN Failover event
-		elif alert['key'] == "EVT_GW_WANTransition":
-			device = check_get_device_stat(alert['gw'])
-			# I think I can match uplink to wan1 ip
-			alert_date = dateutil.parser.isoparse(alert['datetime'])
-			if alert_date.strftime("%Y-%m-%d") == datetime.today().strftime("%Y-%m-%d"):
-				if device:
-					if device[0]['wan1']['ip'] != device[0]['uplink']['ip']:
-						ci = at.get_ci_by_serial(device[0]['serial'])[0]
-						ticket_title = "Gateway failover event"
-						description = "Message from UniFi Controller is: " + alert['msg']
-						at.send_generic_alert_ticket(ticket_title, description, ci['companyID'], ci['id'])
-						print("sent in a ticket for " + site['desc'] + " " + ci['referenceTitle'])
-						archive_alert(alert['_id'])				
-					else:
-						archive_alert(alert['_id'])
-				else:
-					print("EVT_GW_WANTransition - not device was returned")
-					print(alert['msg'])
-			else:
-				archive_alert(alert['_id'])
+		elif alert['key'] == "EVT_GW_RestartedUnknown": # we run a different script to detect if there are multiple alerts for the same device.
+			archive_alert(alert['_id'])	
+		elif alert['key'] == "EVT_GW_WANTransition": # WAN Failover event
+			wan_transition(alert)
 		elif alert['key'] == "EVT_AP_DetectRogueAP":
-			# TODO Need to create an ignore list
-			print(" - Rouge AP Detected")
-			print(alert['msg'])
-#						device = check_get_device_stat(alert['ap'])
-#						alert_date = dateutil.parser.isoparse(alert['datetime'])
-#						if alert_date.strftime("%Y-%m-%d") == datetime.today().strftime("%Y-%m-%d"):
-#							if device:
-#								ci = at.get_ci_by_serial(device[0]['serial'])[0]
-#								ticket_title = "Rouge AP detected"
-#								description = "Message from UniFi Controller is: " + alert['msg']
-#								at.send_generic_alert_ticket(ticket_title, description, ci['companyID'], ci['id'])
-#								print("sent in a ticket for " + site['desc'] + " " + ci['referenceTitle'])
-#								archive_alert(alert['_id'])
-#						else:
-#							archive_alert(alert['_id'])
+			rouge_ap(alert)
+		# TODO Move as it's own function
 		elif alert['key'] == "EVT_AP_RadarDetected":
 			print(" - AP - Radar Detected")
 			print(alert['msg'])
+		# TODO Move as it's own function
 		elif alert['key'] == "EVT_SW_StpPortBlocking":
 			device = check_get_device_stat(alert['sw'])
 			port = int(alert['port']) -1
@@ -192,9 +234,9 @@ def check_alerts(site):
 				archive_alert(alert['_id'])
 			else:
 				archive_alert(alert['_id'])
+		# TODO Move as it's own function
 		elif alert['key'] == "EVT_SW_RestartedUnknown":
-			print(" - Switch - restarted Unknown")
-			print(alert['msg'])
+			archive_alert(alert['_id'])	
 		elif alert['key'] == "EVT_LTE_HardLimitUsed":
 			# Link this to the Threshold ticket, but change status to new and prioirty to Crital
 			device = check_get_device_stat(alert['dev'])
@@ -223,10 +265,13 @@ def check_alerts(site):
 				archive_alert(alert['_id'])					
 			else:
 				archive_alert(alert['_id'])
+		# TODO Move as it's own function
 		elif alert['key'] == "EVT_IPS_IpsAlert":
+			# TODO Create ticket for jeff to do something
 			print(" - IPS Alert")
 			print(alert['msg'])
 		else:
+			# TODO Create ticket for jeff to do something
 			print(" - Something else: " + alert['key'])
 			print(alert)
 
@@ -240,8 +285,9 @@ def close_ticket(ticket):
     return at._api_update("Tickets", params)
 
 def clear_fixed_tickets(site, company):
+	# Fix Lost Contact tickets if device comes back on
 	filter_fields = at.create_filter("noteq", "status", "5") # Not equial Closed ticket
-	filter_fields = filter_fields + "," + at.create_filter("eq", "subIssueType", "252") # UniFi subisseu Lost Contact
+	filter_fields = filter_fields + "," + at.create_filter("eq", "subIssueType", atLostContact) # UniFi subisseu Lost Contact
 	filter_fields = filter_fields + "," + at.create_filter("eq", "companyID", str(company[0]['id'])) # Autotask Company
 	tickets = at.create_query("tickets", filter_fields)
 	for ticket in tickets:
@@ -251,8 +297,22 @@ def clear_fixed_tickets(site, company):
 			if unifi_device:
 				if unifi_device[0]['state'] == 1:
 					close_ticket(ticket)
+	# Fix WAN Transition tickets if Primary WAN comes back up
+	filter_fields = at.create_filter("noteq", "status", "5") # Not equial Closed ticket
+	filter_fields = filter_fields + "," + at.create_filter("eq", "subIssueType", atWANTransition) # UniFi subisseu Lost Contact
+	filter_fields = filter_fields + "," + at.create_filter("eq", "companyID", str(company[0]['id'])) # Autotask Company
+	tickets = at.create_query("tickets", filter_fields)
+	for ticket in tickets:
+		if ticket['configurationItemID'] is not None:
+			at_device = at.get_ci_by_id(str(ticket['configurationItemID']))
+			unifi_device = check_get_device_stat(at_device[0]['serialNumber'])
+			if unifi_device:
+				if unifi_device[0]['wan1']['ip'] == unifi_device[0]['uplink']['ip']:
+					close_ticket(ticket)
+
 
 def main():
+	# Loop through all sites in the UniFi Controller
 	for site in c.get_sites():
 		if site['desc'] not in unifi_ignore:
 			# TODO allow the pulling of more than 1 unifi site id from Autotask
@@ -262,10 +322,11 @@ def main():
 			if not company:
 				print(site['desc'] + " doesn't have a UniFi Site ID. Please add " + site['name'] + " to the Autotask Company's UDF field")
 			else:
-				check_alerts(site)
+				check_unarchived_alerts(site) 
 				clear_fixed_tickets(site, company)
 
 main()
-
-#print(at.get_ticket_by_number("T20220427.0045"))
+#c.site_id = "idrxtph3"
+#print(check_get_device_stat("b4:fb:e4:d5:c2:a1"))
+#print(at.get_ticket_by_number("T20220430.0015"))
 
