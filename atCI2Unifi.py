@@ -72,66 +72,81 @@ def updateATCI(result, ci):
 	return at.update_ci_udf(ci['id'], ci['productID'], udf)
 
 
-def main():
-	# TODO allow the pulling of more than 1 unifi site id from Autotask
-	company_filter_field = "{'op':'eq','field':'isActive','value': '1'},{'op':'noteq','field':'UniFi Site ID','udf': 'true','value': 'None' }"
+def process_ci(company):
+	ci_filter_field = "{'op': 'and','items': [{'op':'eq','field':'isActive','value': '1'},	{'op':'eq','field':'companyID','value': '" + str(company['id']) + "' },   {'op':'noteq','field':'productID','value': '" + str(ignoreProduct) + "'} ] }"
+	cis = at.get_cis(ci_filter_field)
+
+	for ci in cis:
+		mac = None
+		alias = None
+		# Check RMM Fields first
+		
+		if ci['rmmDeviceAuditMacAddress'] is not None:
+			macs = []
+			macs_str = str(ci['rmmDeviceAuditMacAddress'])[1:-1]
+
+			if len(macs_str) == 17: 
+				macs.append(macs_str)
+			else:
+				for value in macs_str.split(", "):
+					macs.append(value)
+			count = 0
+			for address in macs:
+				try: 
+					# TODO need to loop though all mac addresses
+					macaddress.MAC(address)
+					mac = address
+					if ci['rmmDeviceAuditHostname'] is not None:
+						if ci['rmmDeviceAuditDescription'] is not None:
+							if len(macs) == 1: 
+								alias = ci['rmmDeviceAuditHostname'] + " - " + ci['rmmDeviceAuditDescription']
+							else:
+								alias = ci['rmmDeviceAuditHostname'] + "(" + str(count) + ") - " + ci['rmmDeviceAuditDescription']
+						else:
+							alias = ci['rmmDeviceAuditHostname'] + "(" + str(count) + ")"
+					updateUnifiDevice(mac, alias, ci)
+
+				except ValueError as error:
+					pass
+				count += 1
+
+		# Check User Defined Fields for Mac Address
+		else:
+			# Look for "Mac Address" in User Defined Fields
+			for i in ci['userDefinedFields']:
+				if i['name'] == 'Mac Address':
+					if i['value'] is not None:
+						try:
+							macaddress.MAC(i['value'])
+							mac = i['value']
+							alias = ci['referenceTitle']
+							if ci['referenceTitle'] is not None:
+								updateUnifiDevice(mac, alias, ci)
+						except ValueError as error:
+							pass
+
+def process_sites(unifi_field):
+	company_filter_field = "{'op':'eq','field':'isActive','value': '1'},{'op':'noteq','field':'" + unifi_field + "','udf': 'true','value': 'None' }"
 	for company in at.get_companies(company_filter_field):
 		print(company['companyName'])
 		for x in company['userDefinedFields']:
-			if x['name'] == 'UniFi Site ID':
-				c.site_id = x['value']
-				break
-		ci_filter_field = "{'op': 'and','items': [{'op':'eq','field':'isActive','value': '1'},	{'op':'eq','field':'companyID','value': '" + str(company['id']) + "' },   {'op':'noteq','field':'productID','value': '" + str(ignoreProduct) + "'} ] }"
-		cis = at.get_cis(ci_filter_field)
-
-		for ci in cis:
-
-			mac = None
-			alias = None
-			# Check RMM Fields first
-			
-			if ci['rmmDeviceAuditMacAddress'] is not None:
-				macs = []
-				macs_str = str(ci['rmmDeviceAuditMacAddress'])[1:-1]
-
-				if len(macs_str) == 17: 
-					macs.append(macs_str)
+			if x['name'] == unifi_field:
+				if "\n" in x['value']:	
+					fields = x['value'].split("\n")
+					for field in fields:
+						print(company['companyName'] + " UniFi Site ID: " + field)
+						c.site_id = field
+						process_ci(company)
 				else:
-					for value in macs_str.split(", "):
-						macs.append(value)
-				count = 0
-				for address in macs:
-					try: 
-						# TODO need to loop though all mac addresses
-						macaddress.MAC(address)
-						mac = address
-						if ci['rmmDeviceAuditHostname'] is not None:
-							if ci['rmmDeviceAuditDescription'] is not None:
-								if len(macs) == 1: 
-									alias = ci['rmmDeviceAuditHostname'] + " - " + ci['rmmDeviceAuditDescription']
-								else:
-									alias = ci['rmmDeviceAuditHostname'] + "(" + str(count) + ") - " + ci['rmmDeviceAuditDescription']
-							else:
-								alias = ci['rmmDeviceAuditHostname'] + "(" + str(count) + ")"
-						updateUnifiDevice(mac, alias, ci)
+					print(company['companyName'] + " UniFi Site ID: " + x['value'])
+					c.site_id = x['value']
+					process_ci(company)
+					break
 
-					except ValueError as error:
-						pass
-					count += 1
 
-			# Check User Defined Fields for Mac Address
-			else:
-				# Look for "Mac Address" in User Defined Fields
-				for i in ci['userDefinedFields']:
-					if i['name'] == 'Mac Address':
-						if i['value'] is not None:
-							try:
-								macaddress.MAC(i['value'])
-								mac = i['value']
-								alias = ci['referenceTitle']
-								if ci['referenceTitle'] is not None:
-									updateUnifiDevice(mac, alias, ci)
-							except ValueError as error:
-								pass
+
+def main():
+	process_sites('UniFi Site ID')
+	process_sites('UniFi Subsite ID')
 
 main()
