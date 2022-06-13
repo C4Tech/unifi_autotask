@@ -34,6 +34,7 @@
 #  Radar Detected
 #  STP Port Blocking
 #  WAN Transition
+#  Rogue DHCP Server
 #  ZZZ Unknown Event
 
 
