@@ -3,7 +3,7 @@
 # Description:
 # Creates Autotask Tickets for UniFi alerts
 
-# Reuirements
+# Requirements
 # API User has to have "edit Protected Data" permissions to edit UDFs
 # TODO create an onboarding script
 # Needed to create the Following Autotask UDFs for these scripts use
@@ -47,6 +47,7 @@ import requests
 import json
 import sys
 import time
+#import csv
 from datetime import datetime, timedelta
 import dateutil.parser
 from pyunifi.controller import Controller
@@ -54,6 +55,7 @@ from pyunifi.controller import Controller
 import config
 #link to my working library
 from atsite import atSite
+
 
 c = Controller(config.UnifiHost, config.UnifiUsername, config.UnifiPassword, config.UnifiPort, "v5")
 at = atSite(config.atHost, config.atUsername, config.atPassword, config.atAPIInterationcode)
@@ -194,6 +196,23 @@ def rouge_ap(alert):
 	else:
 		archive_alert(alert['_id'])
 
+def rouge_dhcp(alert):
+	device = check_get_device_stat(alert['sw'])
+	alert_date = dateutil.parser.isoparse(alert['datetime'])
+	if alert_date.strftime("%Y-%m-%d") == datetime.today().strftime("%Y-%m-%d"):
+		if device:
+			ci = at.get_ci_by_serial(device[0]['serial'])[0]
+			ticket_title = "Rogue DHCP Server Detected"
+			description = "Message from UniFi Controller is: \n" + alert['datetime'] + " - " + alert['msg'] + "\n\n\n\nPlease Note: This message will not autoclear.\n\nIf this server is suppose to be acting as a DHCP server, please add it to the DHCP Guadian's list in the UniFi Controller. Please inform a senior tech."
+
+			send_unifi_alert_ticket(ticket_title, description, atRougeAp, ci['companyID'], ci['id'])
+			print("sent in a ticket for " + ci['referenceTitle'])
+			archive_alert(alert['_id'])
+
+	else:
+		archive_alert(alert['_id'])
+
+
 # TODO Figure out what to do with these
 def radar_detected(alert):
 	print(" - AP - Radar Detected")
@@ -251,6 +270,7 @@ def ipsAlert(alert):
 def unknown_alert(alert):
 	alert_date = dateutil.parser.isoparse(alert['datetime'])
 	if alert_date.month == datetime.now().month:
+		print(alert)
 		device = check_get_device_stat(alert['dev'])
 		ci = at.get_ci_by_serial(device[0]['serial'])[0]
 		ticket_title = "Unknown UniFi Alert"
@@ -290,6 +310,8 @@ def check_unarchived_alerts(site):
 			lte_threshold(alert)
 		elif alert['key'] == "EVT_IPS_IpsAlert":
 			ipsAlert(alert)
+		elif alert['key'] == "EVT_SW_DetectRogueDHCP":
+			rouge_dhcp(alert)
 		else:
 			unknown_alert(alert)
 
@@ -328,7 +350,22 @@ def clear_fixed_tickets(site, company):
 			if unifi_device:
 				if unifi_device[0]['wan1']['ip'] == unifi_device[0]['uplink']['ip']:
 					close_ticket(ticket)
+
+def check_radius_ip():
+	atRadiusIpChange = "265" # Hard Coding everything else, why not this.
+	c.site_id = "x28yoxh6" # Hard coding Worker Center until I figure out a better way.
+	device = check_get_device_stat("24:5a:4c:98:9f:49")
+	if device[0]['connect_request_ip'] != "104.37.239.117": # Hard coding IP addree for the current office. Need to just update Jumpcloud
+		ci = at.get_ci_by_serial(device[0]['serial'])[0]
+		ticket_title = "Alert: Worker Center's external IP changed"
+		description = "This will break radius. I'm working on a way to update Jumpcloud automaticly, but for now, you must log into just cloud and change the IP address for radius to " + device[0]['connect_request_ip'] + ".\n\n\n You need to assign this ticket to Jeff to fix the scrip, because the IP address is currently hardcoded."
+		send_unifi_alert_ticket(ticket_title, description, atRadiusIpChange, ci['companyID'], ci['id'])
+		print("sent in a ticket for " + site['desc'] + " " + ci['referenceTitle'])
+
+
 def main():
+	check_radius_ip()
+
 	# Loop through all sites in the UniFi Controller
 	for site in c.get_sites():
 		if site['desc'] not in unifi_ignore:
@@ -342,12 +379,6 @@ def main():
 				check_unarchived_alerts(site) 
 				clear_fixed_tickets(site, company)
 
-main()
-#c.site_id = "n5jpgiba"
-#print(check_get_device_stat("fc:ec:da:49:e4:8f"))
-#print(c.get_sysinfo())
-#print(c.get_healthinfo())
-#print(c.get_setting())
 
-#print(at.get_ticket_by_number("T20220504.0039"))
+main()
 
