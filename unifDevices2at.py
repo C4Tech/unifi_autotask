@@ -15,6 +15,7 @@
 # See if we can pull the icons for Unifi devices and send that to AT
 
 # TODO check for UniFi devices in AT that are not in the UniFi controller and deactivate them.
+# TODO check if the device is added to the correct company.
 
 
 import requests
@@ -153,6 +154,16 @@ def check_alerts(alerts, mac, cid, ci_id):
 		sub_issue = str(atUnifiMultiAlert)
 		send_unifi_alert_ticket(ticket_title, description, sub_issue, cid, ci_id)
 
+def remove_admin(expect):
+	for site in c.get_sites():
+		if site['name'] != expect:
+			c.site_id = site["name"]
+#			params = ({"cmd": "get-admins"})
+#			print(c._api_write("cmd/sitemgr", params=params))
+			params = {"admin":"61e9a517f1dce207e4c7b501","cmd":"revoke-admin"}
+			print(site['desc'])
+			print(c._api_write("cmd/sitemgr", params=params))
+
 
 def unifi2at():
 	for site in c.get_sites():
@@ -240,9 +251,6 @@ def unifi2at():
 #								at.send_alert_ticket(cid, return_value['itemId'])
 
 unifi2at()
-#print(at.get_ticket_by_number("T20220429.0027"))
 
-#c.site_id = "rca4qk6h"
-#check_alerts("e0:63:da:23:ac:e4")
-#print(c.get_device_stat("e0:63:da:23:ac:e4"))
+
 
